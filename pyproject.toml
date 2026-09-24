@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "own-chrome"
+version = "0.2.0"
+description = "Agent CLI for the Chrome already open, plus LinkedIn queries and workflows."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Misha Lubich" }]
+keywords = ["chrome", "cdp", "linkedin", "cli", "agents"]
+classifiers = [
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ml-lubich/own-chrome"
+Repository = "https://github.com/ml-lubich/own-chrome"
+Issues = "https://github.com/ml-lubich/own-chrome/issues"
+
+[project.scripts]
+own-chrome = "own_chrome.cli:main"
+li = "own_chrome.linkedin:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/own_chrome"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
