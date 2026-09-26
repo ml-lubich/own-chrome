@@ -133,7 +133,7 @@ def _popups(args: argparse.Namespace) -> int:
             TAB,
         )
         dialog["applied"] = bool(clicked)
-    emit(dialog, args.json or True)
+    emit(dialog, args.json)
     return 0
 
 

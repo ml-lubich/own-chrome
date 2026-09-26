@@ -51,3 +51,11 @@ Default models are `gpt-5-nano` (intent) and `gpt-5-mini` (writing). Override th
 ```bash
 uv run --with pytest --python 3.12 pytest -q
 ```
+
+### Coverage
+
+```bash
+uv run --with pytest --with pytest-cov --python 3.12 pytest -q --cov=own_chrome --cov-report=term-missing
+```
+
+Tests mock only at the boundary (Chrome's CDP websocket/HTTP, the OpenAI API, subprocess, and the macOS keychain) — argument parsing, LinkedIn query building, popup policy, and intent/workflow routing run for real.

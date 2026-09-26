@@ -21,3 +21,12 @@ def test_share_contact_can_be_set_to_share():
 
 def test_unknown_dialog_is_left_alone():
     assert choose_popup_action("Messaging settings", ["Save"], {"share_contact": "decline"}) is None
+
+
+def test_share_contact_dialog_with_no_matching_button_returns_none():
+    action = choose_popup_action(
+        "Share your contact info?",
+        ["Maybe later"],
+        {"share_contact": "decline"},
+    )
+    assert action is None
