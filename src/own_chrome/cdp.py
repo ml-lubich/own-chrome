@@ -205,8 +205,32 @@ def cdp_call(ws_url: str, method: str, params: dict[str, Any] | None = None) -> 
         sock.close()
 
 
-def pick_page(port: int, url_contains: str) -> dict[str, Any]:
+def _hostname(url: str) -> str:
+    try:
+        return (urllib.parse.urlparse(url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def host_matches(url: str, host: str) -> bool:
+    """True if url's hostname is exactly host or a subdomain of it.
+
+    Unlike a plain substring check, this will not match a URL that merely
+    mentions the host in its path or query string -- e.g. a Google search
+    results page for "linkedin.com" does not match host="linkedin.com".
+    """
+    hostname = _hostname(url)
+    host = host.lower()
+    return hostname == host or hostname.endswith(f".{host}")
+
+
+def pick_page(port: int, url_contains: str = "", host: str = "") -> dict[str, Any]:
     found = pages(port)
+    if host:
+        match = [tab for tab in found if host_matches(tab.get("url", ""), host)]
+        if not match:
+            raise ChromeError(f"No open tab with hostname {host!r} (or a subdomain of it)")
+        return match[0]
     if url_contains:
         match = [tab for tab in found if url_contains in tab.get("url", "")]
         if not match:
@@ -217,8 +241,8 @@ def pick_page(port: int, url_contains: str) -> dict[str, Any]:
     return found[0]
 
 
-def evaluate(port: int, expression: str, url_contains: str = "") -> Any:
-    page = pick_page(port, url_contains)
+def evaluate(port: int, expression: str, url_contains: str = "", host: str = "") -> Any:
+    page = pick_page(port, url_contains, host)
     ws_url = page.get("webSocketDebuggerUrl")
     if not ws_url:
         raise ChromeError("Tab has no CDP websocket")
@@ -232,8 +256,8 @@ def evaluate(port: int, expression: str, url_contains: str = "") -> Any:
     return result.get("result", {}).get("value")
 
 
-def navigate(port: int, url: str, url_contains: str = "") -> str:
-    page = pick_page(port, url_contains)
+def navigate(port: int, url: str, url_contains: str = "", host: str = "") -> str:
+    page = pick_page(port, url_contains, host)
     ws_url = page.get("webSocketDebuggerUrl")
     if not ws_url:
         raise ChromeError("Tab has no CDP websocket")

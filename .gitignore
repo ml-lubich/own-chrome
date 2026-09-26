@@ -4,3 +4,7 @@ __pycache__/
 *.pyc
 dist/
 *.egg-info/
+.coverage
+htmlcov/
+.omc/
+*.log

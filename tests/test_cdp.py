@@ -229,6 +229,55 @@ def test_pick_page_defaults_to_first(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# pick_page(host=...) -- exact-hostname matching, not substring
+#
+# Regression: `li` used to pick a tab by `"linkedin.com" in url`, so a Google
+# search results page for "linkedin.com jane doe" (URL contains the literal
+# string "linkedin.com" in its query) could be chosen over the real LinkedIn
+# tab. host= must match the URL's hostname (or a subdomain), never a path or
+# query-string mention of the string.
+# ---------------------------------------------------------------------------
+
+
+def test_pick_page_host_ignores_lookalike_substring_in_query_string(monkeypatch):
+    monkeypatch.setattr(cdp, "pages", lambda port: [
+        {"url": "https://www.google.com/search?q=linkedin.com+jane+doe", "id": "google"},
+        {"url": "https://www.linkedin.com/messaging/", "id": "linkedin"},
+    ])
+    page = cdp.pick_page(9222, host="linkedin.com")
+    assert page["id"] == "linkedin"
+
+
+def test_pick_page_host_matches_subdomain(monkeypatch):
+    monkeypatch.setattr(cdp, "pages", lambda port: [{"url": "https://www.linkedin.com/feed", "id": "1"}])
+    assert cdp.pick_page(9222, host="linkedin.com")["id"] == "1"
+
+
+def test_pick_page_host_rejects_lookalike_domain(monkeypatch):
+    # "notlinkedin.com".endswith("linkedin.com") is True, so a naive endswith
+    # check on the raw hostname would wrongly match. Guard against that.
+    monkeypatch.setattr(cdp, "pages", lambda port: [{"url": "https://notlinkedin.com/", "id": "fake"}])
+    with pytest.raises(cdp.ChromeError, match="No open tab with hostname"):
+        cdp.pick_page(9222, host="linkedin.com")
+
+
+def test_evaluate_host_picks_real_linkedin_tab_over_google_search(monkeypatch):
+    monkeypatch.setattr(cdp, "pages", lambda port: [
+        {"url": "https://www.google.com/search?q=linkedin.com", "webSocketDebuggerUrl": "ws://google"},
+        {"url": "https://www.linkedin.com/feed", "webSocketDebuggerUrl": "ws://li"},
+    ])
+    seen = {}
+
+    def fake_cdp_call(ws_url, method, params=None):
+        seen["ws_url"] = ws_url
+        return {"result": {"value": "hi"}}
+
+    monkeypatch.setattr(cdp, "cdp_call", fake_cdp_call)
+    assert cdp.evaluate(9222, "1+1", host="linkedin.com") == "hi"
+    assert seen["ws_url"] == "ws://li"
+
+
+# ---------------------------------------------------------------------------
 # Websocket boundary (fake socket standing in for Chrome's end)
 # ---------------------------------------------------------------------------
 

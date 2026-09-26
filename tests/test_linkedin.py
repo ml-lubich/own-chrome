@@ -134,7 +134,7 @@ def test_popups_reports_decline_action_without_apply(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, tab: json.dumps(
+        lambda port, expr, host: json.dumps(
             {"title": "Share your contact info?", "buttons": ["No, don't share", "Yes, please share"]}
         ),
     )
@@ -149,7 +149,7 @@ def test_popups_reports_decline_action_without_apply(monkeypatch, capsys):
 def test_popups_apply_clicks_button(monkeypatch, capsys):
     calls = []
 
-    def fake_evaluate(port, expr, tab):
+    def fake_evaluate(port, expr, host):
         calls.append(expr)
         if len(calls) == 1:
             return json.dumps({"title": "Share your contact info?", "buttons": ["No, don't share"]})
@@ -171,7 +171,7 @@ def test_popups_plain_text_respects_json_flag(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, tab: json.dumps(
+        lambda port, expr, host: json.dumps(
             {"title": "Share your contact info?", "buttons": ["No, don't share"]}
         ),
     )
@@ -184,7 +184,7 @@ def test_popups_plain_text_respects_json_flag(monkeypatch, capsys):
 
 def test_popups_unknown_dialog_no_action(monkeypatch, capsys):
     monkeypatch.setattr(
-        li, "evaluate", lambda port, expr, tab: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
+        li, "evaluate", lambda port, expr, host: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
     )
     monkeypatch.setattr(li, "load_config", lambda: {"popups": {"share_contact": "decline"}})
     rc = li._popups(_Args())
@@ -213,7 +213,7 @@ def test_workflow_fetches_thread_text_when_absent(monkeypatch, tmp_path, capsys)
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(json.dumps({"name": "job-reply", "match": r"role", "intent": "job only", "write": "short"}))
 
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, tab: json.dumps("no roles mentioned here"))
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: json.dumps("no roles mentioned here"))
 
     def complete(model, messages):
         return json.dumps({"go": False, "reason": "not relevant"})
@@ -289,7 +289,7 @@ def test_main_threads_json(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, tab: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["threads", "--json"])
     assert rc == 0
@@ -298,7 +298,7 @@ def test_main_threads_json(monkeypatch, capsys):
 
 
 def test_main_query_title_kind(monkeypatch, capsys):
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, tab: json.dumps({"title": "My Feed", "url": "https://x"}))
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: json.dumps({"title": "My Feed", "url": "https://x"}))
     rc = li.main(["query", "title", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -307,7 +307,7 @@ def test_main_query_title_kind(monkeypatch, capsys):
 
 
 def test_main_query_url_kind(monkeypatch, capsys):
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, tab: json.dumps({"title": "My Feed", "url": "https://x"}))
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: json.dumps({"title": "My Feed", "url": "https://x"}))
     rc = li.main(["query", "url", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -317,11 +317,11 @@ def test_main_query_url_kind(monkeypatch, capsys):
 
 def test_main_inbox_navigates_by_default(monkeypatch, capsys):
     calls = []
-    monkeypatch.setattr(li, "navigate", lambda port, url, tab: calls.append((url, tab)))
+    monkeypatch.setattr(li, "navigate", lambda port, url, host: calls.append((url, host)))
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, tab: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["inbox", "--json"])
     assert rc == 0
@@ -330,11 +330,11 @@ def test_main_inbox_navigates_by_default(monkeypatch, capsys):
 
 def test_main_inbox_no_navigate_skips_navigation(monkeypatch, capsys):
     calls = []
-    monkeypatch.setattr(li, "navigate", lambda port, url, tab: calls.append((url, tab)))
+    monkeypatch.setattr(li, "navigate", lambda port, url, host: calls.append((url, host)))
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, tab: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["inbox", "--no-navigate", "--json"])
     assert rc == 0
@@ -345,14 +345,14 @@ def test_main_filter_with_no_threads_exits_2(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, tab: json.dumps({"query": "unread", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host: json.dumps({"query": "unread", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["unread", "--filter", "nobody", "--json"])
     assert rc == 2
 
 
 def test_main_chrome_error_reported(monkeypatch, capsys):
-    def fail(port, expr, tab):
+    def fail(port, expr, host):
         raise ChromeError("Chrome CDP is not up")
 
     monkeypatch.setattr(li, "evaluate", fail)
@@ -362,7 +362,7 @@ def test_main_chrome_error_reported(monkeypatch, capsys):
 
 
 def test_main_bad_json_from_page_reported(monkeypatch, capsys):
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, tab: "not json at all")
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: "not json at all")
     rc = li.main(["threads"])
     assert rc == 1
     assert "did not return JSON" in capsys.readouterr().err
@@ -370,7 +370,7 @@ def test_main_bad_json_from_page_reported(monkeypatch, capsys):
 
 def test_main_popups_dispatches(monkeypatch, capsys):
     monkeypatch.setattr(
-        li, "evaluate", lambda port, expr, tab: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
+        li, "evaluate", lambda port, expr, host: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
     )
     rc = li.main(["popups", "--json"])
     assert rc == 0

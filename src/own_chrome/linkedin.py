@@ -116,7 +116,7 @@ def _popups(args: argparse.Namespace) -> int:
           const buttons = [...dialog.querySelectorAll('button')].map((b) => b.innerText.trim()).filter(Boolean);
           return JSON.stringify({title, buttons});
         })()""",
-        TAB,
+        host=TAB,
     )
     dialog = json.loads(raw) if isinstance(raw, str) else raw
     policy = load_config().get("popups") or {"share_contact": "decline"}
@@ -130,7 +130,7 @@ def _popups(args: argparse.Namespace) -> int:
             " if (!dialog) return false;"
             " const btn = [...dialog.querySelectorAll('button')].find((b) => b.innerText.trim() === label);"
             " if (!btn) return false; btn.click(); return true; })(" + json.dumps(action) + ")",
-            TAB,
+            host=TAB,
         )
         dialog["applied"] = bool(clicked)
     emit(dialog, args.json)
@@ -147,7 +147,7 @@ def _workflow(args: argparse.Namespace) -> int:
         raw = evaluate(
             args.port,
             "JSON.stringify([...document.querySelectorAll('.msg-s-event-listitem')].slice(-4).map((n) => n.innerText.trim()).join('\\n\\n'))",
-            TAB,
+            host=TAB,
         )
         text = json.loads(raw) if isinstance(raw, str) else raw
     result = run_workflow(spec, text, complete, dry_run=True)
@@ -216,15 +216,15 @@ def main(argv: list[str] | None = None) -> int:
         kind = args.name
     try:
         if args.cmd == "inbox" and not args.no_navigate:
-            navigate(args.port, MESSAGING, TAB)
+            navigate(args.port, MESSAGING, host=TAB)
         if kind in ("title", "url"):
-            raw = evaluate(args.port, "JSON.stringify({title: document.title, url: location.href})", TAB)
+            raw = evaluate(args.port, "JSON.stringify({title: document.title, url: location.href})", host=TAB)
             payload = json.loads(raw)
             payload["query"] = kind
             payload["threads"] = []
             payload["lines"] = []
         else:
-            raw = evaluate(args.port, _expression(kind, args.filter, args.limit), TAB)
+            raw = evaluate(args.port, _expression(kind, args.filter, args.limit), host=TAB)
             payload = json.loads(raw) if isinstance(raw, str) else raw
     except ChromeError as exc:
         print(f"li: {exc}", file=sys.stderr)
