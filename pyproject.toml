@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "own-chrome"
-version = "0.2.0"
-description = "Agent CLI for the Chrome already open, plus LinkedIn queries and workflows."
+version = "0.4.0"
+description = "Agent CLI for the Chrome already open, plus a Typer LinkedIn command."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -17,7 +17,9 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Topic :: Utilities",
 ]
-dependencies = []
+dependencies = [
+    "typer>=0.12",
+]
 
 [project.urls]
 Homepage = "https://github.com/ml-lubich/own-chrome"

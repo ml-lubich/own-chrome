@@ -8,3 +8,4 @@ dist/
 htmlcov/
 .omc/
 *.log
+tasks/

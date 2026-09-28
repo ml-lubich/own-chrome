@@ -1,6 +1,6 @@
 ---
 name: own-chrome
-description: Drive the Google Chrome the user already has open (own-chrome) and query LinkedIn in that same window (li), via Chrome's DevTools Protocol on 127.0.0.1:9222 — no second browser, no Playwright. Use when the user wants their real signed-in Chrome tabs read, filtered, navigated, or JS-evaluated ("check my tabs", "what's open in Chrome", "read this page", "check LinkedIn unread", "check my LinkedIn inbox", "classify this LinkedIn thread"). Do not use to launch a fresh/automated browser — that's a different tool. Read-only by default; only `li popups --apply` and `own-chrome goto/eval` can act on the page, and only when the user explicitly asks.
+description: Drive the Google Chrome the user already has open (own-chrome) and LinkedIn in that same window (li), via Chrome's DevTools Protocol on 127.0.0.1:9222 — no second browser, no Playwright. Use when the user wants their real signed-in Chrome tabs read or navigated, or LinkedIn messaging listed, a thread selected, or a reply typed ("check my tabs", "open LinkedIn messaging", "select that thread", "tell them"). Do not launch a fresh browser. `li tell` types only; add `--send` only when the user named the recipient and the text.
 ---
 
 # own-chrome / li
@@ -63,23 +63,36 @@ own-chrome tabs --json
 own-chrome eval "document.title" --tab example.com --json
 ```
 
-## li commands (from `li --help`)
+## li commands (from `li -h` / `li --help`)
+
+`li` is Typer. `-h` and `--help` work on the root and on every command. The help
+opens with an `LI` wordmark and the agent commands. `--json` does not print
+the wordmark. Do not drive LinkedIn with `python -c` or raw CDP.
 
 ```
+li commands [--json]                                 # catalog, no browser
+li open [--json]                                     # messaging tab in the attached Chrome
+li threads | unread | inbox [--no-navigate] [--json] # open messaging, then list
+li select NAME [--json]                              # one thread; exit 3 if several match
+li read [--limit N] [--json]
+li tell NAME --text TEXT [--send] [--json]           # types; Send only with --send
+li send [--json]                                     # click Send on the open composer
 li query {threads,unread,read,title,url} [--filter F] [--limit N] [--json]
-li threads | unread | read | status               # shorthand for query
-li inbox [--no-navigate]                           # navigates to /messaging/ first
-li queries
-li popups [--apply]                                # inspect/dismiss a LinkedIn modal
+li popups [--apply]
 li workflow run <spec.json> [--text TEXT] [--dry-run]
 ```
 
 ```bash
-li query threads --filter acme --limit 5 --json
-li query unread --json
-li popups --json                # --apply clicks the configured button; omit to just report it
+li commands --json
+li open --json
+li threads --filter acme --limit 5 --json
+li select "Ada Lovelace" --json
+li tell "Ada Lovelace" --text "Thanks, I'll look." --json
+li popups --json
 li workflow run examples/job-reply.json --text "coffee tomorrow?"
 ```
+
+`threads` and `unread` open messaging when the LinkedIn tab is somewhere else (the feed, for example). `--no-navigate` keeps the old read-the-open-tab behavior. `li` does not launch a second browser.
 
 `li workflow run` always returns `sent: false` — it classifies and drafts,
 it never sends. A regex miss skips the model entirely; a hit calls an intent
@@ -110,10 +123,13 @@ flags above.
 
 ## Safety rules
 
-- Read-only by default: `status`, `tabs`, `query`, `threads`, `unread`,
-  `read`, `queries`, `popups` (without `--apply`) never modify the page.
+- Read-only by default: `status`, `tabs`, `query` of `title`/`url`/`read`,
+  `queries`, `commands`, and `popups` (without `--apply`) never modify the page.
+- `threads`, `unread`, `inbox`, and `open` may navigate the LinkedIn tab to
+  messaging. `select` clicks one thread. `tell` types. None of those send.
+- `li tell` sends only with `--send`. `li send` clicks Send on the open composer.
+  Use either only when this turn names the recipient and the text.
 - `li workflow run` never sends a LinkedIn message — `sent` is always `false`.
 - `li popups --apply` and `own-chrome goto`/`eval` can act on or navigate the
   real, already-open tab. Only use `--apply` or `eval` with side effects when
-  the user explicitly asked for that action — never send, delete, post, or
-  submit anything on their behalf without being asked.
+  the user explicitly asked for that action.

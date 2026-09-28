@@ -241,8 +241,15 @@ def pick_page(port: int, url_contains: str = "", host: str = "") -> dict[str, An
     return found[0]
 
 
-def evaluate(port: int, expression: str, url_contains: str = "", host: str = "") -> Any:
-    page = pick_page(port, url_contains, host)
+def evaluate(
+    port: int,
+    expression: str,
+    url_contains: str = "",
+    host: str = "",
+    page: dict[str, Any] | None = None,
+) -> Any:
+    if page is None:
+        page = pick_page(port, url_contains, host)
     ws_url = page.get("webSocketDebuggerUrl")
     if not ws_url:
         raise ChromeError("Tab has no CDP websocket")

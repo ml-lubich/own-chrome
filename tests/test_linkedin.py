@@ -16,6 +16,18 @@ import pytest
 from own_chrome import linkedin as li
 from own_chrome.cdp import ChromeError
 
+_MESSAGING_TAB = {
+    "id": "msg",
+    "url": "https://www.linkedin.com/messaging/",
+    "title": "Messaging",
+    "webSocketDebuggerUrl": "ws://msg",
+}
+
+
+@pytest.fixture(autouse=True)
+def _default_linkedin_tab(monkeypatch):
+    monkeypatch.setattr(li, "pages", lambda port: [_MESSAGING_TAB])
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers
@@ -134,7 +146,7 @@ def test_popups_reports_decline_action_without_apply(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, host: json.dumps(
+        lambda port, expr, host="", page=None: json.dumps(
             {"title": "Share your contact info?", "buttons": ["No, don't share", "Yes, please share"]}
         ),
     )
@@ -149,7 +161,7 @@ def test_popups_reports_decline_action_without_apply(monkeypatch, capsys):
 def test_popups_apply_clicks_button(monkeypatch, capsys):
     calls = []
 
-    def fake_evaluate(port, expr, host):
+    def fake_evaluate(port, expr, host="", page=None):
         calls.append(expr)
         if len(calls) == 1:
             return json.dumps({"title": "Share your contact info?", "buttons": ["No, don't share"]})
@@ -171,7 +183,7 @@ def test_popups_plain_text_respects_json_flag(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, host: json.dumps(
+        lambda port, expr, host="", page=None: json.dumps(
             {"title": "Share your contact info?", "buttons": ["No, don't share"]}
         ),
     )
@@ -184,7 +196,7 @@ def test_popups_plain_text_respects_json_flag(monkeypatch, capsys):
 
 def test_popups_unknown_dialog_no_action(monkeypatch, capsys):
     monkeypatch.setattr(
-        li, "evaluate", lambda port, expr, host: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
+        li, "evaluate", lambda port, expr, host="", page=None: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
     )
     monkeypatch.setattr(li, "load_config", lambda: {"popups": {"share_contact": "decline"}})
     rc = li._popups(_Args())
@@ -213,7 +225,7 @@ def test_workflow_fetches_thread_text_when_absent(monkeypatch, tmp_path, capsys)
     spec_path = tmp_path / "spec.json"
     spec_path.write_text(json.dumps({"name": "job-reply", "match": r"role", "intent": "job only", "write": "short"}))
 
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: json.dumps("no roles mentioned here"))
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host="", page=None: json.dumps("no roles mentioned here"))
 
     def complete(model, messages):
         return json.dumps({"go": False, "reason": "not relevant"})
@@ -285,11 +297,16 @@ def test_main_queries_json(capsys):
     assert payload["queries"] == list(li.QUERIES)
 
 
+def _already_messaging(monkeypatch) -> None:
+    monkeypatch.setattr(li, "pages", lambda port: [_MESSAGING_TAB])
+
+
 def test_main_threads_json(monkeypatch, capsys):
+    _already_messaging(monkeypatch)
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, host: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host="", page=None: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["threads", "--json"])
     assert rc == 0
@@ -298,7 +315,7 @@ def test_main_threads_json(monkeypatch, capsys):
 
 
 def test_main_query_title_kind(monkeypatch, capsys):
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: json.dumps({"title": "My Feed", "url": "https://x"}))
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host="", page=None: json.dumps({"title": "My Feed", "url": "https://x"}))
     rc = li.main(["query", "title", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -307,7 +324,7 @@ def test_main_query_title_kind(monkeypatch, capsys):
 
 
 def test_main_query_url_kind(monkeypatch, capsys):
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: json.dumps({"title": "My Feed", "url": "https://x"}))
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host="", page=None: json.dumps({"title": "My Feed", "url": "https://x"}))
     rc = li.main(["query", "url", "--json"])
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
@@ -317,12 +334,19 @@ def test_main_query_url_kind(monkeypatch, capsys):
 
 def test_main_inbox_navigates_by_default(monkeypatch, capsys):
     calls = []
-    monkeypatch.setattr(li, "navigate", lambda port, url, host: calls.append((url, host)))
     monkeypatch.setattr(
         li,
-        "evaluate",
-        lambda port, expr, host: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
+        "pages",
+        lambda port: [{"id": "feed", "url": "https://www.linkedin.com/feed/", "title": "Feed", "webSocketDebuggerUrl": "ws://feed"}],
     )
+    monkeypatch.setattr(li, "navigate", lambda port, url, host: calls.append((url, host)))
+
+    def fake_eval(port, expr, host="", page=None):
+        if '"query"' in expr:
+            return json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []})
+        return json.dumps({"ready": True, "url": li.MESSAGING, "title": "Messaging"})
+
+    monkeypatch.setattr(li, "evaluate", fake_eval)
     rc = li.main(["inbox", "--json"])
     assert rc == 0
     assert calls == [(li.MESSAGING, li.TAB)]
@@ -334,7 +358,7 @@ def test_main_inbox_no_navigate_skips_navigation(monkeypatch, capsys):
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, host: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host="", page=None: json.dumps({"query": "threads", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["inbox", "--no-navigate", "--json"])
     assert rc == 0
@@ -342,35 +366,36 @@ def test_main_inbox_no_navigate_skips_navigation(monkeypatch, capsys):
 
 
 def test_main_filter_with_no_threads_exits_2(monkeypatch, capsys):
+    _already_messaging(monkeypatch)
     monkeypatch.setattr(
         li,
         "evaluate",
-        lambda port, expr, host: json.dumps({"query": "unread", "url": "u", "title": "t", "threads": [], "lines": []}),
+        lambda port, expr, host="", page=None: json.dumps({"query": "unread", "url": "u", "title": "t", "threads": [], "lines": []}),
     )
     rc = li.main(["unread", "--filter", "nobody", "--json"])
     assert rc == 2
 
 
 def test_main_chrome_error_reported(monkeypatch, capsys):
-    def fail(port, expr, host):
+    def fail(port, expr, host="", page=None):
         raise ChromeError("Chrome CDP is not up")
 
     monkeypatch.setattr(li, "evaluate", fail)
-    rc = li.main(["threads"])
+    rc = li.main(["threads", "--no-navigate"])
     assert rc == 1
     assert "li: Chrome CDP is not up" in capsys.readouterr().err
 
 
 def test_main_bad_json_from_page_reported(monkeypatch, capsys):
-    monkeypatch.setattr(li, "evaluate", lambda port, expr, host: "not json at all")
-    rc = li.main(["threads"])
+    monkeypatch.setattr(li, "evaluate", lambda port, expr, host="", page=None: "not json at all")
+    rc = li.main(["threads", "--no-navigate"])
     assert rc == 1
     assert "did not return JSON" in capsys.readouterr().err
 
 
 def test_main_popups_dispatches(monkeypatch, capsys):
     monkeypatch.setattr(
-        li, "evaluate", lambda port, expr, host: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
+        li, "evaluate", lambda port, expr, host="", page=None: json.dumps({"title": "Messaging settings", "buttons": ["Save"]})
     )
     rc = li.main(["popups", "--json"])
     assert rc == 0
@@ -385,3 +410,222 @@ def test_main_workflow_dispatches(monkeypatch, tmp_path, capsys):
     assert rc == 0
     result = json.loads(capsys.readouterr().out)
     assert result["sent"] is False
+
+
+def test_main_threads_navigates_off_the_feed(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        li,
+        "pages",
+        lambda port: [{"id": "feed", "url": "https://www.linkedin.com/feed/", "title": "Feed", "webSocketDebuggerUrl": "ws://feed"}],
+    )
+    monkeypatch.setattr(li, "navigate", lambda port, url, host: calls.append(url))
+
+    def fake_eval(port, expr, host="", page=None):
+        if '"query"' in expr:
+            return json.dumps(
+                {
+                    "query": "threads",
+                    "url": li.MESSAGING,
+                    "title": "Messaging",
+                    "threads": [{"name": "Ada", "preview": "hi", "unread": False}],
+                    "lines": [],
+                }
+            )
+        return json.dumps({"ready": True, "url": li.MESSAGING, "title": "Messaging"})
+
+    monkeypatch.setattr(li, "evaluate", fake_eval)
+    rc = li.main(["threads", "--json"])
+    assert rc == 0
+    assert calls == [li.MESSAGING]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["threads"][0]["name"] == "Ada"
+
+
+def test_main_open_creates_a_tab_when_linkedin_is_missing(monkeypatch, capsys):
+    opened = []
+    state: dict[str, list] = {"tabs": []}
+
+    def fake_pages(_port):
+        return state["tabs"]
+
+    def fake_open(_port, url):
+        opened.append(url)
+        tab = {"id": "new", "url": url, "title": "", "webSocketDebuggerUrl": "ws://new"}
+        state["tabs"] = [tab]
+        return tab
+
+    monkeypatch.setattr(li, "pages", fake_pages)
+    monkeypatch.setattr(li, "open_tab", fake_open)
+    monkeypatch.setattr(
+        li,
+        "evaluate",
+        lambda port, expr, host="", page=None: json.dumps({"ready": True, "url": li.MESSAGING, "title": "Messaging"}),
+    )
+    rc = li.main(["open", "--json"])
+    assert rc == 0
+    assert opened == [li.MESSAGING]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["opened"] == "tab"
+    assert payload["ready"] is True
+
+
+def test_main_open_stays_when_already_in_messaging(monkeypatch, capsys):
+    _already_messaging(monkeypatch)
+    monkeypatch.setattr(li, "navigate", lambda *a, **k: (_ for _ in ()).throw(AssertionError("navigate")))
+    rc = li.main(["open", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["opened"] == "already"
+
+
+def test_main_select_ambiguous_exits_3(monkeypatch, capsys):
+    _already_messaging(monkeypatch)
+    monkeypatch.setattr(
+        li,
+        "evaluate",
+        lambda port, expr, host="", page=None: json.dumps(
+            {"action": "select", "ok": False, "ambiguous": True, "matches": ["Ada Lovelace", "Ada Wong"], "matched": ""}
+        ),
+    )
+    rc = li.main(["select", "Ada", "--json"])
+    assert rc == 3
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["matches"] == ["Ada Lovelace", "Ada Wong"]
+
+
+def test_main_select_missing_exits_2(monkeypatch, capsys):
+    _already_messaging(monkeypatch)
+    monkeypatch.setattr(
+        li,
+        "evaluate",
+        lambda port, expr, host="", page=None: json.dumps(
+            {"action": "select", "ok": False, "ambiguous": False, "matches": [], "matched": ""}
+        ),
+    )
+    rc = li.main(["select", "Nobody", "--json"])
+    assert rc == 2
+
+
+def test_main_select_blank_name_exits_2(capsys):
+    rc = li.main(["select", "   "])
+    assert rc == 2
+    assert "name is required" in capsys.readouterr().err
+
+
+def test_main_tell_types_without_sending(monkeypatch, capsys):
+    seen = []
+    _already_messaging(monkeypatch)
+
+    def fake_eval(port, expr, host="", page=None):
+        seen.append(expr)
+        return json.dumps(
+            {
+                "action": "tell",
+                "ok": True,
+                "sent": False,
+                "matched": "Ada",
+                "chars": 2,
+                "ambiguous": False,
+                "matches": ["Ada"],
+            }
+        )
+
+    monkeypatch.setattr(li, "evaluate", fake_eval)
+    rc = li.main(["tell", "Ada", "--text", "hi", "--json"])
+    assert rc == 0
+    assert '"send": false' in seen[-1]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sent"] is False
+
+
+def test_main_tell_send_flag_is_in_the_page_call(monkeypatch, capsys):
+    seen = []
+    _already_messaging(monkeypatch)
+
+    def fake_eval(port, expr, host="", page=None):
+        seen.append(expr)
+        return json.dumps({"action": "tell", "ok": True, "sent": True, "matched": "Ada", "chars": 2, "ambiguous": False})
+
+    monkeypatch.setattr(li, "evaluate", fake_eval)
+    rc = li.main(["tell", "Ada", "--text", "hi", "--send", "--json"])
+    assert rc == 0
+    assert '"send": true' in seen[-1]
+
+
+def test_main_send_does_not_navigate(monkeypatch, capsys):
+    def boom(*_a, **_k):
+        raise AssertionError("send must not navigate")
+
+    monkeypatch.setattr(li, "navigate", boom)
+    monkeypatch.setattr(
+        li,
+        "evaluate",
+        lambda port, expr, host="", page=None: json.dumps({"action": "send", "ok": True, "sent": True, "ambiguous": False}),
+    )
+    rc = li.main(["send", "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["sent"] is True
+
+
+def test_main_send_unavailable_exits_2(monkeypatch, capsys):
+    monkeypatch.setattr(
+        li,
+        "evaluate",
+        lambda port, expr, host="", page=None: json.dumps({"action": "send", "ok": False, "sent": False, "ambiguous": False}),
+    )
+    rc = li.main(["send", "--json"])
+    assert rc == 2
+
+
+def test_main_commands_lists_agent_verbs(capsys):
+    rc = li.main(["commands", "--json"])
+    assert rc == 0
+    names = [row["name"] for row in json.loads(capsys.readouterr().out)["commands"]]
+    assert "open" in names
+    assert "select" in names
+    assert "tell" in names
+    assert "send" in names
+
+
+def test_threads_uses_the_messaging_tab_when_a_feed_tab_is_listed_first(monkeypatch, capsys):
+    feed = {"id": "feed", "url": "https://www.linkedin.com/feed/", "title": "Feed | LinkedIn", "webSocketDebuggerUrl": "ws://feed"}
+    msg = {
+        "id": "msg",
+        "url": "https://www.linkedin.com/messaging/thread/abc/",
+        "title": "(5) Messaging | LinkedIn",
+        "webSocketDebuggerUrl": "ws://msg",
+    }
+    monkeypatch.setattr(li, "pages", lambda port: [feed, msg])
+
+    def forbid_navigate(*_a, **_k):
+        raise AssertionError("feed tab must stay put when messaging is already open")
+
+    monkeypatch.setattr(li, "navigate", forbid_navigate)
+    seen: list[str] = []
+
+    def fake_eval(port, expr, url_contains="", host="", page=None):
+        seen.append("" if page is None else page.get("id", ""))
+        target = page or feed
+        return json.dumps(
+            {
+                "query": "threads",
+                "url": target["url"],
+                "title": target["title"],
+                "threads": [{"name": "Scott Simon", "preview": "hi", "unread": False}],
+                "lines": [],
+            }
+        )
+
+    monkeypatch.setattr(li, "evaluate", fake_eval)
+    rc = li.main(["threads", "--json", "--limit", "5"])
+    assert rc == 0
+    assert seen[-1] == "msg"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["url"].startswith("https://www.linkedin.com/messaging/")
+    assert payload["threads"][0]["name"] == "Scott Simon"
+
+
+def test_emit_action_plain_line(capsys):
+    li.emit({"action": "tell", "matched": "Ada", "chars": 5, "sent": False}, False)
+    assert capsys.readouterr().out.strip() == "tell Ada 5 chars not sent"

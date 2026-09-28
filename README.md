@@ -2,9 +2,9 @@
 
 Two commands for the Google Chrome window that is already open. Neither one starts a browser.
 
-`own-chrome` talks to Chrome's debugging port. `li` queries LinkedIn in that same window and can run a small classify-then-draft workflow. The workflow does not send messages.
+`own-chrome` talks to Chrome's debugging port. `li` drives LinkedIn in that same window: it opens messaging, lists threads, selects one thread, and types a reply. Sending is a separate flag. A classify-then-draft workflow can draft a reply and does not send it.
 
-Stdlib only. No Playwright, no Chrome for Testing.
+`li` is a Typer command. `own-chrome` stays stdlib. No Playwright, no Chrome for Testing.
 
 ```bash
 uv tool install git+https://github.com/ml-lubich/own-chrome
@@ -20,17 +20,28 @@ On Chrome 136 and newer, the debugging port is ignored if you point it at the de
 
 ## Agents
 
-Pass `--json`. `--filter` is a case-insensitive substring. `--limit` caps rows. A filter that matches nothing exits 2.
+Agents start with `li -h` or `li --help`. Every command has the same flags. Do not drop into `python -c` or raw CDP. `--json` is one object and does not print the wordmark. `--filter` is a case-insensitive substring. `--limit` caps rows. A filter that matches nothing exits 2.
 
 ```bash
 own-chrome status --json --filter linkedin --limit 5
 own-chrome tabs --json --filter linkedin
-li query threads --filter acme --limit 5 --json
-li query unread --json --limit 10
-li query read --limit 8 --json
+li commands --json
+li open --json
+li threads --limit 5 --json
+li select "Ada Lovelace" --json
+li read --limit 8 --json
+li tell "Ada Lovelace" --text "Thanks, I'll look." --json
+li tell "Ada Lovelace" --text "Thanks, I'll look." --send --json
+li send --json
 li popups --json
 li workflow run examples/job-reply.json --text "coffee tomorrow?"
 ```
+
+`li open` opens `https://www.linkedin.com/messaging/` in the attached Chrome. If a messaging tab is already open, `li` uses that tab and leaves a feed tab alone. The feed tab is navigated only when it is the only LinkedIn tab. `--no-navigate` reads the open tab as it is. If no LinkedIn tab exists, `open` creates one. Exit codes: `0` ok, `1` Chrome or page error, `2` no match, `3` several threads match (nothing is clicked).
+
+`li tell` types into the composer and leaves `sent: false` unless `--send` is present. `li send` clicks Send on text already in the composer. `li select` and `li tell` refuse when more than one name matches.
+
+`li commands --json` is the catalog agents should read. One JSON object, no browser required.
 
 `li workflow run` always returns `sent: false`. A regex miss does not call a model. A hit calls the intent model for go or no-go plus a reason. The write model runs only when intent says go.
 

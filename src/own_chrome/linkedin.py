@@ -1,4 +1,4 @@
-"""LinkedIn queries against the Chrome tab that is already open."""
+"""LinkedIn commands against the Chrome tab that is already open."""
 
 from __future__ import annotations
 
@@ -7,11 +7,13 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from own_chrome.cdp import DEFAULT_PORT, ChromeError, evaluate, navigate
+from own_chrome.actions import COMMANDS, act_expression, choose_linkedin_tab, on_messaging, ready_expression
+from own_chrome.cdp import DEFAULT_PORT, ChromeError, evaluate, navigate, open_tab, pages
 from own_chrome.popups import choose_popup_action
 from own_chrome.workflow import run_workflow
 
@@ -107,7 +109,7 @@ def complete(model: str, messages: list[dict]) -> str:
 
 
 def _popups(args: argparse.Namespace) -> int:
-    raw = evaluate(
+    raw = _eval(
         args.port,
         """(() => {
           const dialog = document.querySelector('[role="dialog"]');
@@ -116,7 +118,6 @@ def _popups(args: argparse.Namespace) -> int:
           const buttons = [...dialog.querySelectorAll('button')].map((b) => b.innerText.trim()).filter(Boolean);
           return JSON.stringify({title, buttons});
         })()""",
-        host=TAB,
     )
     dialog = json.loads(raw) if isinstance(raw, str) else raw
     policy = load_config().get("popups") or {"share_contact": "decline"}
@@ -124,13 +125,12 @@ def _popups(args: argparse.Namespace) -> int:
     dialog["action"] = action
     dialog["applied"] = False
     if args.apply and action:
-        clicked = evaluate(
+        clicked = _eval(
             args.port,
             "((label) => { const dialog = document.querySelector('[role=\"dialog\"]');"
             " if (!dialog) return false;"
             " const btn = [...dialog.querySelectorAll('button')].find((b) => b.innerText.trim() === label);"
             " if (!btn) return false; btn.click(); return true; })(" + json.dumps(action) + ")",
-            host=TAB,
         )
         dialog["applied"] = bool(clicked)
     emit(dialog, args.json)
@@ -144,10 +144,9 @@ def _workflow(args: argparse.Namespace) -> int:
     spec.setdefault("write_model", config.get("write_model") or "gpt-5-mini")
     text = args.text
     if not text:
-        raw = evaluate(
+        raw = _eval(
             args.port,
             "JSON.stringify([...document.querySelectorAll('.msg-s-event-listitem')].slice(-4).map((n) => n.innerText.trim()).join('\\n\\n'))",
-            host=TAB,
         )
         text = json.loads(raw) if isinstance(raw, str) else raw
     result = run_workflow(spec, text, complete, dry_run=True)
@@ -160,6 +159,21 @@ def emit(payload: dict, as_json: bool) -> None:
         json.dump(payload, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         return
+    if payload.get("action"):
+        bits = [str(payload["action"])]
+        if payload.get("matched"):
+            bits.append(str(payload["matched"]))
+        elif payload.get("opened"):
+            bits.append(str(payload["opened"]))
+        if payload.get("action") == "tell":
+            bits.append(f"{payload.get('chars', 0)} chars")
+        if "sent" in payload and payload.get("action") in ("tell", "send"):
+            bits.append("sent" if payload.get("sent") else "not sent")
+        print(" ".join(bits))
+        if payload.get("ambiguous"):
+            for name in payload.get("matches") or []:
+                print(f"- {name}")
+        return
     print(payload.get("title", ""))
     print(payload.get("url", ""))
     for thread in payload.get("threads") or []:
@@ -170,40 +184,136 @@ def emit(payload: dict, as_json: bool) -> None:
         print(line.replace("\n", " | ")[:240])
 
 
-def main(argv: list[str] | None = None) -> int:
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--port", type=int, default=DEFAULT_PORT)
-    common.add_argument("--json", action="store_true")
-    common.add_argument("--filter", default="", help="Case-insensitive match on name or preview")
-    common.add_argument("--limit", type=int, default=20)
-    parser = argparse.ArgumentParser(prog="li", description="Query LinkedIn in the already-open Chrome.")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-    query = sub.add_parser("query", parents=[common])
-    query.add_argument("name", choices=QUERIES)
-    for name in ("threads", "unread", "read", "status"):
-        sub.add_parser(name, parents=[common])
-    inbox = sub.add_parser("inbox", parents=[common])
-    inbox.add_argument("--no-navigate", action="store_true")
-    sub.add_parser("queries", parents=[common])
-    pop = sub.add_parser("popups", parents=[common])
-    pop.add_argument("--apply", action="store_true", help="Click the button from ~/.config/li/config.json")
-    flow = sub.add_parser("workflow", parents=[common])
-    flow.add_argument("action", choices=("run",))
-    flow.add_argument("spec")
-    flow.add_argument("--text", default="", help="Thread text. Default is the open thread.")
-    flow.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args(argv)
-    if args.cmd == "popups":
-        return _popups(args)
-    if args.cmd == "workflow":
-        return _workflow(args)
-    if args.cmd == "queries":
-        if args.json:
-            emit({"query": "queries", "url": "", "title": "", "threads": [], "lines": [], "queries": list(QUERIES)}, True)
-        else:
-            for name in QUERIES:
-                print(name)
+def _as_dict(raw: object) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        raise ChromeError("page did not return JSON")
+    return json.loads(raw)
+
+
+def linkedin_tab(port: int) -> dict:
+    chosen = choose_linkedin_tab(pages(port))
+    if chosen is None:
+        raise ChromeError(f"No open tab with hostname {TAB!r} (or a subdomain of it)")
+    return chosen
+
+
+def _eval(port: int, expression: str) -> object:
+    return evaluate(port, expression, page=linkedin_tab(port))
+
+
+def ensure_messaging(port: int) -> dict:
+    """Open messaging in the attached Chrome. Does not start a browser.
+
+    An existing messaging tab wins over a feed tab. The feed tab is only
+    navigated when it is the only LinkedIn tab.
+    """
+    try:
+        page = linkedin_tab(port)
+    except ChromeError:
+        tab = open_tab(port, MESSAGING)
+        return {
+            "action": "open",
+            "opened": "tab",
+            "ok": True,
+            "url": tab.get("url") or MESSAGING,
+            "title": tab.get("title") or "",
+        }
+    url = page.get("url") or ""
+    if on_messaging(url):
+        return {
+            "action": "open",
+            "opened": "already",
+            "ok": True,
+            "url": url,
+            "title": page.get("title") or "",
+        }
+    navigate(port, MESSAGING, host=TAB)
+    return {"action": "open", "opened": "navigated", "ok": True, "url": MESSAGING, "title": ""}
+
+
+def _wait_ready(port: int) -> dict:
+    # ponytail: 1s in-page poll plus a short retry. The feed document can still
+    # be the execution context for the first call after Page.navigate.
+    last = "messaging list did not load"
+    for _attempt in range(12):
+        try:
+            payload = _as_dict(_eval(port, ready_expression()))
+        except (ChromeError, json.JSONDecodeError) as exc:
+            last = str(exc)
+            time.sleep(0.25)
+            continue
+        if payload.get("ready"):
+            return payload
+        last = str(payload.get("url") or last)
+        time.sleep(0.25)
+    raise ChromeError(f"messaging list did not load ({last})")
+
+
+def _prepare(port: int) -> dict:
+    info = ensure_messaging(port)
+    if info["opened"] == "already":
+        return info
+    ready = _wait_ready(port)
+    info["url"] = ready.get("url") or info["url"]
+    info["title"] = ready.get("title") or info.get("title") or ""
+    info["ready"] = True
+    return info
+
+
+def _wants_messaging(args: argparse.Namespace, kind: str) -> bool:
+    if getattr(args, "no_navigate", False):
+        return False
+    return kind in ("threads", "unread")
+
+
+def _act(args: argparse.Namespace, op: str) -> int:
+    name = (getattr(args, "name", "") or "").strip()
+    text = getattr(args, "text", "") or ""
+    send = bool(getattr(args, "send", False))
+    if op != "send" and not name:
+        print("li: name is required", file=sys.stderr)
+        return 2
+    if op != "send":
+        _prepare(args.port)
+    payload = _as_dict(_eval(args.port, act_expression(op, name, text, send)))
+    emit(payload, args.json)
+    if payload.get("ambiguous"):
+        return 3
+    if not payload.get("ok"):
+        return 2
+    return 0
+
+
+def _commands(as_json: bool) -> int:
+    payload = {"commands": [dict(row) for row in COMMANDS]}
+    if as_json:
+        emit(payload, True)
         return 0
+    for row in COMMANDS:
+        print(f"{row['name']}\t{row['summary']}")
+    return 0
+
+
+def run_open(args: argparse.Namespace) -> int:
+    info = _prepare(args.port)
+    info["action"] = "open"
+    info["ok"] = True
+    emit(info, args.json)
+    return 0
+
+
+def run_queries(as_json: bool) -> int:
+    if as_json:
+        emit({"query": "queries", "url": "", "title": "", "threads": [], "lines": [], "queries": list(QUERIES)}, True)
+    else:
+        for name in QUERIES:
+            print(name)
+    return 0
+
+
+def run_query(args: argparse.Namespace) -> int:
     kind = {
         "status": "threads",
         "threads": "threads",
@@ -215,16 +325,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "query" and args.name in ("title", "url"):
         kind = args.name
     try:
-        if args.cmd == "inbox" and not args.no_navigate:
-            navigate(args.port, MESSAGING, host=TAB)
+        if _wants_messaging(args, kind):
+            _prepare(args.port)
         if kind in ("title", "url"):
-            raw = evaluate(args.port, "JSON.stringify({title: document.title, url: location.href})", host=TAB)
+            raw = _eval(args.port, "JSON.stringify({title: document.title, url: location.href})")
             payload = json.loads(raw)
             payload["query"] = kind
             payload["threads"] = []
             payload["lines"] = []
         else:
-            raw = evaluate(args.port, _expression(kind, args.filter, args.limit), host=TAB)
+            raw = _eval(args.port, _expression(kind, args.filter, args.limit))
             payload = json.loads(raw) if isinstance(raw, str) else raw
     except ChromeError as exc:
         print(f"li: {exc}", file=sys.stderr)
@@ -240,6 +350,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.filter and kind in ("threads", "unread") and not payload.get("threads"):
         return 2
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    from own_chrome.li_app import main as app_main
+
+    return app_main(argv)
 
 
 if __name__ == "__main__":
