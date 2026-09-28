@@ -4,22 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "own-chrome"
-version = "0.4.0"
-description = "Agent CLI for the Chrome already open, plus a Typer LinkedIn command."
+version = "0.5.0"
+description = "Agent CLI for the Google Chrome already open on this machine."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "Misha Lubich" }]
-keywords = ["chrome", "cdp", "linkedin", "cli", "agents"]
+keywords = ["chrome", "cdp", "cli", "agents"]
 classifiers = [
   "Environment :: Console",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Topic :: Utilities",
 ]
-dependencies = [
-    "typer>=0.12",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/ml-lubich/own-chrome"
@@ -28,7 +26,6 @@ Issues = "https://github.com/ml-lubich/own-chrome/issues"
 
 [project.scripts]
 own-chrome = "own_chrome.cli:main"
-li = "own_chrome.linkedin:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=4"]

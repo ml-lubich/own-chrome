@@ -216,8 +216,8 @@ def host_matches(url: str, host: str) -> bool:
     """True if url's hostname is exactly host or a subdomain of it.
 
     Unlike a plain substring check, this will not match a URL that merely
-    mentions the host in its path or query string -- e.g. a Google search
-    results page for "linkedin.com" does not match host="linkedin.com".
+    mentions the host in its path or query string -- e.g. a search results
+    page for "example.com" does not match host="example.com".
     """
     hostname = _hostname(url)
     host = host.lower()

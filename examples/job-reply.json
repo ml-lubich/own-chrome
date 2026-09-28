@@ -1,6 +1,0 @@
-{
-  "name": "job-reply",
-  "match": "\\b(role|hiring|engineer|position|inmail)\\b",
-  "intent": "Go only if the sender is asking about a job, role, or interview. Say no for friends, sales, and anything that is not a job.",
-  "write": "Draft 2 to 4 short sentences. No em dashes. Do not claim the message was sent."
-}
