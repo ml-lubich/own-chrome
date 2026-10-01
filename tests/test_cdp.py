@@ -198,7 +198,9 @@ def test_open_tab_quotes_url(monkeypatch):
 
     monkeypatch.setattr(cdp.urllib.request, "urlopen", fake_urlopen)
     tab = cdp.open_tab(9222, "https://example.com/a b")
-    assert "a%20b" in captured["url"]
+    # Chrome 154 rejects GET /json/new with 405. The endpoint is PUT.
+    assert captured["url"].get_method() == "PUT"
+    assert "a%20b" in captured["url"].full_url
     assert tab["title"] == "t"
 
 

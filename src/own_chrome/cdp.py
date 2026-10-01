@@ -26,9 +26,10 @@ class ChromeError(RuntimeError):
     pass
 
 
-def _http_json(url: str) -> Any:
+def _http_json(url: str, method: str = "GET") -> Any:
+    request = urllib.request.Request(url, method=method) if method != "GET" else url
     try:
-        with urllib.request.urlopen(url, timeout=3) as response:
+        with urllib.request.urlopen(request, timeout=3) as response:
             return json.loads(response.read().decode())
     except urllib.error.URLError as exc:
         raise ChromeError(f"Chrome CDP is not up at {url}: {exc}") from exc
@@ -274,4 +275,5 @@ def navigate(port: int, url: str, url_contains: str = "", host: str = "") -> str
 
 def open_tab(port: int, url: str) -> dict[str, Any]:
     quoted = urllib.parse.quote(url, safe=":/?&=%")
-    return _http_json(f"http://127.0.0.1:{port}/json/new?{quoted}")
+    # Chrome 154 returns 405 for GET /json/new. PUT has been the supported method.
+    return _http_json(f"http://127.0.0.1:{port}/json/new?{quoted}", method="PUT")
