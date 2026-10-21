@@ -1,14 +1,16 @@
 ---
 name: own-chrome
-description: Drive the Google Chrome the user already has open, via Chrome's DevTools Protocol on 127.0.0.1:9222 — no second browser, no Playwright. Use when the user wants their real signed-in Chrome tabs read or navigated ("check my tabs", "open that page", "read this tab's title"). Do not launch a fresh browser. For LinkedIn automation, use linkedin-mcp instead.
+description: Inspect or lightly navigate the user's already-open Google Chrome via own-chrome. For general interactive web automation, use Veil Browser MCP attached to the intended Chrome session; own-chrome remains the small status/tab/navigation CLI. For LinkedIn workflows, use linkedin-mcp.
 ---
 
 # own-chrome
 
-A stdlib-only Python CLI (`own-chrome`) that talks to the Google Chrome the
-user already launched with debugging enabled — no separate automation
-browser, no Playwright/Selenium/Chrome-for-Testing (those are explicitly
-rejected, see below).
+A stdlib-only Python CLI (`own-chrome`) for status, tab listing, opening and
+navigating tabs in Google Chrome with remote debugging enabled. For richer
+interactive automation, prefer the Veil Browser MCP runtime (`veil-mcp`),
+which owns its CDP transport and can attach to the intended Chrome session.
+Do not add a second CDP client or duplicate Veil's browser interaction layer
+here.
 
 LinkedIn automation lives in a separate package,
 [linkedin-mcp](https://github.com/ml-lubich/linkedin-mcp) (`linkedin messages ...`),
@@ -43,10 +45,9 @@ profile (or have copied their real profile into it once) — this tool never
 manages that for you and never logs anyone in.
 
 Verify: `own-chrome status` should print the browser version, pid, and open
-tabs. If it errors, Chrome isn't up on 9222 yet, or the listener isn't the
-real Google Chrome (automation-launched Chrome — flagged by
-`--enable-automation`, Playwright, or "chrome for testing" — is deliberately
-rejected).
+tabs. If it errors, Chrome isn't up on 9222 yet, or inspect the listener
+before acting. Veil is the preferred runtime for agent-driven interaction;
+this CLI does not claim to provide stealth or broad automation features.
 
 ## Commands (from `own-chrome --help`)
 
