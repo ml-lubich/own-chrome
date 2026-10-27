@@ -5,12 +5,16 @@ from __future__ import annotations
 import base64
 import json
 import os
+import platform
+import re
 import socket
 import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
+from typing import Sequence
 
 DEFAULT_PORT = 9222
 REJECT_MARKERS = (
@@ -46,9 +50,13 @@ def _listener_pid(port: int) -> int:
         raise ChromeError(f"Could not see who is listening on {port}") from exc
     for line in out.splitlines()[1:]:
         parts = line.split()
-        if len(parts) > 1 and parts[1].isdigit():
+        local = any(
+            part.startswith((f"127.0.0.1:{port}", f"[::1]:{port}", f"localhost:{port}"))
+            for part in parts
+        )
+        if len(parts) > 1 and parts[1].isdigit() and local:
             return int(parts[1])
-    raise ChromeError(f"Nothing is listening on 127.0.0.1:{port}")
+    raise ChromeError(f"Nothing is listening on loopback 127.0.0.1:{port}")
 
 
 def _command_line(pid: int) -> str:
@@ -78,19 +86,130 @@ def _real_chrome(command: str) -> bool:
     return "google chrome" in lowered or lowered.startswith("chrome ")
 
 
-def describe(port: int = DEFAULT_PORT) -> dict[str, Any]:
+def _default_user_data_dirs() -> list[Path]:
+    configured = os.environ.get("OWN_CHROME_USER_DATA_DIR")
+    if configured:
+        return [Path(configured).expanduser()]
+    system = platform.system()
+    if system == "Darwin":
+        return [Path.home() / "Library/Application Support/Google/Chrome"]
+    if system == "Windows":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        return [Path(local_app_data) / "Google/Chrome/User Data"] if local_app_data else []
+    return [Path.home() / ".config/google-chrome"]
+
+
+def discover(
+    port: int | None = None,
+    user_data_dirs: Sequence[str | Path] | None = None,
+) -> dict[str, Any]:
+    """Find and verify a running local Chrome CDP endpoint.
+
+    With an explicit port, inspect only that port. Otherwise, inspect Chrome's
+    DevToolsActivePort file in the known user-data directory (or the supplied
+    directories). Never probes remote endpoints or launches another browser.
+    """
+    configured_port = os.environ.get("OWN_CHROME_CDP_PORT")
+    if port is None and configured_port:
+        try:
+            port = int(configured_port)
+        except ValueError as exc:
+            raise ChromeError("OWN_CHROME_CDP_PORT must be an integer from 1 to 65535") from exc
+    if port is not None:
+        return _describe_process(port)
+
+    roots = [Path(item).expanduser() for item in user_data_dirs] if user_data_dirs is not None else _default_user_data_dirs()
+    errors: list[str] = []
+    for root in roots:
+        active_port = root / "DevToolsActivePort"
+        if not active_port.is_file():
+            continue
+        try:
+            lines = active_port.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            errors.append(f"{active_port}: {exc}")
+            continue
+        if len(lines) < 2:
+            errors.append(f"{active_port} is incomplete")
+            continue
+        try:
+            active = int(lines[0].strip())
+        except ValueError:
+            errors.append(f"{active_port} has an invalid port")
+            continue
+        if not 1 <= active <= 65535 or not lines[1].startswith("/devtools/browser/"):
+            errors.append(f"{active_port} has an invalid CDP endpoint")
+            continue
+        try:
+            return _describe_process(active, expected_user_data_dir=root)
+        except ChromeError as exc:
+            errors.append(str(exc))
+    if errors:
+        raise ChromeError("Could not verify Chrome from DevToolsActivePort: " + "; ".join(errors))
+    raise ChromeError(
+        "No Chrome CDP endpoint found. In Chrome, open chrome://inspect/#remote-debugging "
+        "and enable remote debugging for this browser, or set OWN_CHROME_CDP_PORT and "
+        "OWN_CHROME_USER_DATA_DIR for an existing local CDP session."
+    )
+
+
+def _describe_process(port: int, expected_user_data_dir: str | Path | None = None) -> dict[str, Any]:
+    if not 1 <= port <= 65535:
+        raise ChromeError("Chrome CDP port must be from 1 to 65535")
     pid = _listener_pid(port)
     command = _command_line(pid)
     if not _real_chrome(command):
         raise ChromeError(f"Port {port} is pid {pid}, not the installed Google Chrome")
-    version = _http_json(f"http://127.0.0.1:{port}/json/version")
+    user_data_dir = _flag(command, "--user-data-dir")
+    if expected_user_data_dir is not None:
+        defaults = _default_user_data_dirs()
+        if not user_data_dir and not defaults:
+            raise ChromeError("Cannot verify Chrome user-data directory on this platform")
+        actual = Path(user_data_dir).expanduser() if user_data_dir else defaults[0]
+        expected = Path(expected_user_data_dir).expanduser()
+        if actual.resolve() != expected.resolve():
+            raise ChromeError("CDP Chrome profile does not match discovered profile")
+    defaults = _default_user_data_dirs()
     return {
         "pid": pid,
-        "browser": version.get("Browser", ""),
-        "user_data_dir": _flag(command, "--user-data-dir"),
+        "browser": "",
+        "user_data_dir": user_data_dir or (str(defaults[0]) if defaults else ""),
         "profile_directory": _flag(command, "--profile-directory") or "(chrome default)",
         "port": port,
     }
+
+
+def describe(port: int = DEFAULT_PORT, expected_user_data_dir: str | Path | None = None) -> dict[str, Any]:
+    """Return running Chrome metadata, using the version endpoint when Chrome exposes it."""
+    info = _describe_process(port, expected_user_data_dir)
+    try:
+        version = _http_json(f"http://127.0.0.1:{port}/json/version")
+    except ChromeError:
+        # Chrome 147+ can intentionally withhold the HTTP discovery endpoint
+        # while exposing the browser WebSocket through DevToolsActivePort.
+        return info
+    info["browser"] = version.get("Browser", "")
+    return info
+
+
+def browser_ws_url(info: dict[str, Any]) -> str:
+    """Build the local browser WebSocket URL from a verified Chrome profile.
+
+    The capability URL is deliberately not included in status metadata because
+    it grants broad control over every page in that Chrome instance.
+    """
+    try:
+        port = int(info["port"])
+        root = Path(info["user_data_dir"]).expanduser()
+        lines = (root / "DevToolsActivePort").read_text(encoding="utf-8").splitlines()
+    except (KeyError, TypeError, ValueError, OSError) as exc:
+        raise ChromeError("Could not read Chrome DevToolsActivePort for the selected profile") from exc
+    if len(lines) < 2 or lines[0].strip() != str(port):
+        raise ChromeError("Chrome DevToolsActivePort does not match the selected port")
+    path = lines[1].strip()
+    if not re.fullmatch(r"/devtools/browser/[A-Za-z0-9_-]+", path):
+        raise ChromeError("Chrome DevToolsActivePort has an invalid browser WebSocket path")
+    return f"ws://127.0.0.1:{port}{path}"
 
 
 def pages(port: int = DEFAULT_PORT) -> list[dict[str, Any]]:

@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import shutil
 import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 
+from own_chrome import cdp
 from own_chrome.cdp import (
     DEFAULT_PORT,
     ChromeError,
@@ -16,6 +22,11 @@ from own_chrome.cdp import (
     open_tab,
     pages,
 )
+
+try:
+    __version__ = version("own-chrome")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 
 def emit(payload: object, as_json: bool) -> None:
@@ -36,10 +47,25 @@ def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int, default=20)
 
 
+def _browser_harness_env(browser: dict[str, object], endpoint: str) -> dict[str, str]:
+    """Pin Browser Harness to this profile without reusing another profile's daemon."""
+    env = os.environ.copy()
+    env["BU_CDP_WS"] = endpoint
+    if "BH_RUNTIME_DIR" not in env:
+        user_data_dir = browser.get("user_data_dir")
+        if not isinstance(user_data_dir, str) or not user_data_dir:
+            raise ChromeError("Chrome discovery did not return the selected user data directory")
+        normalized = str(Path(user_data_dir).expanduser().resolve())
+        profile_hash = hashlib.sha256(normalized.encode()).hexdigest()[:12]
+        env["BH_RUNTIME_DIR"] = str(Path.home() / ".config/own-chrome/bh" / profile_hash)
+    return env
+
+
 def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     _common(common)
     parser = argparse.ArgumentParser(prog="own-chrome", description="Drive the already-open Google Chrome.")
+    parser.add_argument("-V", "--version", action="version", version=f"own-chrome {__version__}")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status", parents=[common])
     sub.add_parser("tabs", parents=[common])
@@ -51,6 +77,20 @@ def main(argv: list[str] | None = None) -> int:
     ev = sub.add_parser("eval", parents=[common])
     ev.add_argument("expression")
     ev.add_argument("--tab", default="")
+    agent = sub.add_parser(
+        "agent",
+        help="Run Browser Harness against an already-running local Chrome",
+        description=(
+            "Hand off to Browser Use's browser-harness CLI for agent-directed browsing in the existing local "
+            "Chrome session. This never launches a browser or uses a cloud browser."
+        ),
+    )
+    agent.add_argument(
+        "--check",
+        action="store_true",
+        help="Check for a reachable, real Chrome CDP endpoint without starting the harness",
+    )
+    agent.add_argument("--json", action="store_true", help="Print the check result as JSON")
     args = parser.parse_args(argv)
     try:
         if args.cmd == "status":
@@ -84,6 +124,38 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "eval":
             value = evaluate(args.port, args.expression, args.tab or args.filter)
             emit({"value": value}, args.json)
+        elif args.cmd == "agent":
+            try:
+                browser = cdp.discover()
+            except ChromeError as exc:
+                message = str(exc)
+                if "chrome://inspect/#remote-debugging" not in message:
+                    message += (
+                        ". In Chrome, open chrome://inspect/#remote-debugging and enable "
+                        "'Allow remote debugging for this browser instance', then retry."
+                    )
+                raise ChromeError(message) from exc
+            if args.check:
+                browser_name = browser.get("browser") or "Google Chrome (version unavailable)"
+                if args.json:
+                    emit({**browser, "browser": browser_name}, True)
+                else:
+                    print(
+                        f"Chrome CDP ready: {browser_name} on 127.0.0.1:{browser['port']} "
+                        f"({browser.get('profile_directory', 'profile')})"
+                    )
+                return 0
+            endpoint = cdp.browser_ws_url(browser)
+            harness = shutil.which("browser-harness")
+            if harness is None:
+                raise ChromeError(
+                    "browser-harness is not installed. Install Browser Use's local Browser "
+                    "Harness, then retry; no browser was launched."
+                )
+            # Browser Harness reads agent-provided Python from stdin. execvpe preserves stdin,
+            # stdout, stderr, signals, and exit status, and lets the harness detach cleanly.
+            env = _browser_harness_env(browser, endpoint)
+            os.execvpe(harness, ["browser-harness"], env)
     except ChromeError as exc:
         print(f"own-chrome: {exc}", file=sys.stderr)
         return 1

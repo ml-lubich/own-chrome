@@ -77,13 +77,17 @@ def test_filter_pages_zero_limit_is_unbounded():
 
 
 def test_listener_pid_parses_lsof_output(monkeypatch):
-    output = "COMMAND PID USER FD TYPE\nGoogle 4321 me 10u IPv4\n"
+    output = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nGoogle 4321 me 10u IPv4 0 0 TCP 127.0.0.1:9222 (LISTEN)\n"
     monkeypatch.setattr(cdp.subprocess, "check_output", lambda *a, **k: output)
     assert cdp._listener_pid(9222) == 4321
 
 
 def test_listener_pid_no_match_raises(monkeypatch):
-    monkeypatch.setattr(cdp.subprocess, "check_output", lambda *a, **k: "COMMAND PID\n")
+    monkeypatch.setattr(
+        cdp.subprocess,
+        "check_output",
+        lambda *a, **k: "COMMAND PID USER FD TYPE NAME\nGoogle 4321 me 10u IPv4 TCP *:9222 (LISTEN)\n",
+    )
     with pytest.raises(cdp.ChromeError, match="Nothing is listening"):
         cdp._listener_pid(9222)
 
@@ -142,7 +146,8 @@ def test_http_json_connection_refused_raises(monkeypatch):
 def _mock_process_boundary(monkeypatch, command: str):
     def fake_check_output(args, **kwargs):
         if args[0] == "lsof":
-            return "COMMAND PID\nGoogle 4321 me\n"
+            port = next(arg.removeprefix("-iTCP:") for arg in args if arg.startswith("-iTCP:"))
+            return f"COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nGoogle 4321 me 10u IPv4 0 0 TCP 127.0.0.1:{port} (LISTEN)\n"
         return command
 
     monkeypatch.setattr(cdp.subprocess, "check_output", fake_check_output)
@@ -447,3 +452,105 @@ def test_navigate_requires_websocket_url(monkeypatch):
     monkeypatch.setattr(cdp, "pages", lambda port: [{"url": "https://linkedin.com", "id": "42"}])
     with pytest.raises(cdp.ChromeError, match="no CDP websocket"):
         cdp.navigate(9222, "https://linkedin.com/feed", "linkedin")
+
+
+def test_discover_uses_chrome_devtools_active_port_and_validates_profile(monkeypatch, tmp_path):
+    profile = tmp_path / "Chrome"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text("19333\n/devtools/browser/abc\n")
+    info = {"port": 19333, "user_data_dir": str(profile), "browser": "Chrome/156", "pid": 10}
+    calls = []
+
+    def fake_describe(port, expected_user_data_dir=None):
+        calls.append((port, expected_user_data_dir))
+        return info
+
+    monkeypatch.setattr(cdp, "_describe_process", fake_describe)
+
+    assert cdp.discover(user_data_dirs=[profile]) == info
+    assert calls == [(19333, profile)]
+
+
+def test_discover_rejects_port_file_for_different_chrome_profile(monkeypatch, tmp_path):
+    profile = tmp_path / "Chrome"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text("19333\n/devtools/browser/abc\n")
+
+    def wrong_profile(port, expected_user_data_dir=None):
+        raise cdp.ChromeError("CDP Chrome profile does not match discovered profile")
+
+    monkeypatch.setattr(cdp, "_describe_process", wrong_profile)
+    with pytest.raises(cdp.ChromeError, match="does not match"):
+        cdp.discover(user_data_dirs=[profile])
+
+
+@pytest.mark.parametrize("contents", ["", "not-a-port", "0", "65536", "19333\nws://remote/devtools"])
+def test_discover_rejects_invalid_or_non_local_active_port(contents, tmp_path):
+    profile = tmp_path / "Chrome"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text(contents)
+    with pytest.raises(cdp.ChromeError, match="DevToolsActivePort"):
+        cdp.discover(user_data_dirs=[profile])
+
+
+def test_discover_explicit_port_is_validated(monkeypatch):
+    info = {"port": 19333, "user_data_dir": "/tmp/profile", "browser": "Chrome/156", "pid": 10}
+    called = []
+
+    def fake_describe(port, expected_user_data_dir=None):
+        called.append((port, expected_user_data_dir))
+        return info
+
+    monkeypatch.setattr(cdp, "_describe_process", fake_describe)
+    assert cdp.discover(port=19333) == info
+    assert called == [(19333, None)]
+
+
+def test_describe_rejects_wrong_user_data_dir(monkeypatch):
+    _mock_process_boundary(
+        monkeypatch,
+        "/Applications/Google Chrome.app/MacOS/Google Chrome "
+        "--user-data-dir=/tmp/other --remote-debugging-port=9222",
+    )
+    monkeypatch.setattr(
+        cdp.urllib.request,
+        "urlopen",
+        lambda url, timeout=3: _FakeResponse(json.dumps({"Browser": "Chrome/156"}).encode()),
+    )
+    with pytest.raises(cdp.ChromeError, match="profile does not match"):
+        cdp.describe(9222, expected_user_data_dir="/tmp/intended")
+
+
+def test_discover_does_not_require_json_version_endpoint(monkeypatch, tmp_path):
+    profile = tmp_path / "Chrome"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text("19333\n/devtools/browser/abc\n")
+    _mock_process_boundary(monkeypatch, f"/Applications/Google Chrome.app/MacOS/Google Chrome --user-data-dir={profile}")
+    monkeypatch.setattr(cdp, "_http_json", lambda *args, **kwargs: pytest.fail("must not query /json/version"))
+
+    info = cdp.discover(user_data_dirs=[profile])
+    assert info["port"] == 19333
+    assert info["browser"] == ""
+
+
+def test_browser_ws_url_uses_validated_loopback_endpoint(tmp_path):
+    profile = tmp_path / "Chrome"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text("19333\n/devtools/browser/abc-123\n")
+
+    assert cdp.browser_ws_url({"port": 19333, "user_data_dir": str(profile)}) == (
+        "ws://127.0.0.1:19333/devtools/browser/abc-123"
+    )
+
+
+@pytest.mark.parametrize(
+    "port,path",
+    [(19334, "/devtools/browser/abc"), (19333, "ws://remote/devtools/browser/abc"),
+     (19333, "/devtools/page/abc"), (19333, "/devtools/browser/abc?token=x")],
+)
+def test_browser_ws_url_rejects_mismatched_or_unsafe_endpoint(port, path, tmp_path):
+    profile = tmp_path / "Chrome"
+    profile.mkdir()
+    (profile / "DevToolsActivePort").write_text(f"19333\n{path}\n")
+    with pytest.raises(cdp.ChromeError):
+        cdp.browser_ws_url({"port": port, "user_data_dir": str(profile)})

@@ -8,6 +8,8 @@ cdp functions cli imports and exercise the real parsing and branching logic.
 from __future__ import annotations
 
 import json
+import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -146,3 +148,140 @@ def test_custom_port_is_forwarded(monkeypatch):
     monkeypatch.setattr(cli, "open_tab", fake_open_tab)
     cli.main(["open", "https://example.com", "--port", "9333"])
     assert captured["port"] == 9333
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_root_help_accepts_both_help_flags(flag, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main([flag])
+    assert exc.value.code == 0
+    assert "agent" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("flag", ["-V", "--version"])
+def test_root_version_accepts_both_version_flags(flag, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main([flag])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.startswith("own-chrome ")
+
+
+def test_agent_refuses_without_local_cdp_and_does_not_launch_harness(monkeypatch, capsys):
+    import own_chrome.cdp as cdp
+
+    def fail():
+        raise ChromeError("no eligible Chrome CDP endpoint")
+
+    monkeypatch.setattr(cdp, "discover", fail)
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/local/bin/browser-harness")
+    calls = []
+    monkeypatch.setattr(cli.os, "execvp", lambda *args: calls.append(args))
+
+    assert cli.main(["agent"]) == 1
+    assert calls == []
+    assert "no eligible Chrome CDP endpoint" in capsys.readouterr().err
+
+
+def test_agent_fails_with_setup_hint_when_cdp_is_missing(monkeypatch, capsys):
+    import own_chrome.cdp as cdp
+
+    def fail():
+        raise ChromeError("Chrome CDP is not enabled")
+
+    monkeypatch.setattr(cdp, "discover", fail)
+    assert cli.main(["agent"]) == 1
+    assert "chrome://inspect/#remote-debugging" in capsys.readouterr().err
+
+
+def test_agent_execs_browser_harness_preserving_stdio_and_pinning_verified_cdp(monkeypatch):
+    import own_chrome.cdp as cdp
+
+    monkeypatch.delenv("BH_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(
+        cdp,
+        "discover",
+        lambda: {"browser": "Chrome/156", "port": 19222, "user_data_dir": "/tmp/Profile A"},
+    )
+    monkeypatch.setattr(
+        cdp, "browser_ws_url", lambda info: "ws://127.0.0.1:19222/devtools/browser/test-id"
+    )
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/local/bin/browser-harness")
+
+    class ExecCalled(Exception):
+        pass
+
+    calls = []
+
+    def fake_exec(file, args, env):
+        calls.append((file, args, env["BU_CDP_WS"], env["BH_RUNTIME_DIR"]))
+        raise ExecCalled
+
+    monkeypatch.setattr(cli.os, "execvpe", fake_exec)
+    with pytest.raises(ExecCalled):
+        cli.main(["agent"])
+
+    profile_hash = hashlib.sha256(str(Path("/tmp/Profile A").resolve()).encode()).hexdigest()[:12]
+    expected_runtime = str(Path.home() / ".config/own-chrome/bh" / profile_hash)
+    assert calls == [
+        (
+            "/usr/local/bin/browser-harness",
+            ["browser-harness"],
+            "ws://127.0.0.1:19222/devtools/browser/test-id",
+            expected_runtime,
+        )
+    ]
+
+
+def test_agent_reports_missing_harness_without_launch(monkeypatch, capsys):
+    import own_chrome.cdp as cdp
+
+    monkeypatch.setattr(
+        cdp,
+        "discover",
+        lambda: {"browser": "Chrome/156", "port": 9222, "user_data_dir": "/tmp/Profile A"},
+    )
+    monkeypatch.setattr(
+        cdp, "browser_ws_url", lambda info: "ws://127.0.0.1:9222/devtools/browser/test-id"
+    )
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    calls = []
+    monkeypatch.setattr(cli.os, "execvp", lambda *args: calls.append(args))
+
+    assert cli.main(["agent"]) == 1
+    assert calls == []
+    err = capsys.readouterr().err
+    assert "browser-harness" in err
+    assert "install" in err.lower()
+
+
+def test_browser_harness_runtime_isolated_by_profile_and_respects_override(monkeypatch):
+    monkeypatch.delenv("BH_RUNTIME_DIR", raising=False)
+    first = cli._browser_harness_env(
+        {"user_data_dir": "/tmp/chrome/Profile 1"}, "ws://127.0.0.1:9222/devtools/browser/a"
+    )
+    second = cli._browser_harness_env(
+        {"user_data_dir": "/tmp/chrome/Profile 2"}, "ws://127.0.0.1:9223/devtools/browser/b"
+    )
+    assert first["BH_RUNTIME_DIR"] != second["BH_RUNTIME_DIR"]
+    assert first["BH_RUNTIME_DIR"].endswith(
+        str(
+            Path(".config/own-chrome/bh")
+            / hashlib.sha256(str(Path("/tmp/chrome/Profile 1").resolve()).encode()).hexdigest()[:12]
+        )
+    )
+
+    monkeypatch.setenv("BH_RUNTIME_DIR", "/custom/browser-harness/runtime")
+    explicit = cli._browser_harness_env(
+        {"user_data_dir": "/tmp/chrome/Profile 1"}, "ws://127.0.0.1:9222/devtools/browser/a"
+    )
+    assert explicit["BH_RUNTIME_DIR"] == "/custom/browser-harness/runtime"
+
+
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_agent_help_documents_local_cdp_without_cloud(flag, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["agent", flag])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out.lower()
+    assert "browser-harness" in out
+    assert "cdp" in out
