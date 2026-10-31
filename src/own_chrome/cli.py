@@ -58,13 +58,11 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
     def format_help(self):
         body = super().format_help()
         art = (
-            "       .-=========-.\n"
-            "     .'  ░▒▓███▓▒░  '.\n"
-            "    /  ░▒▓███████▓▒░  \\\n"
-            "   |  ░▒▓████████▓▒░  |\n"
-            "    \\  ░▒▓███████▓▒░  /\n"
-            "     '.  ░▒▓███▓▒░  .'\n"
-            "       '-----------'"
+            "                      __                                __\n"
+            "  ____ _ _      ___  / /_      ________  ________  ____/ /__\n"
+            " / __ `// | /| / / |/ / /     / ___/ _ \\/ ___/ _ \\/ __  / _ \\\n"
+            "/ /_/ //| |/ |/ /|   / /__   (__  )  __/ /  /  __/ /_/ /  __/\n"
+            "\\__,_/ |__/|__/ |_/|_/____/  /____/\\___/_/   \\___/\\__,_/\\___/"
         )
         if self._color:
             shades = (
@@ -74,19 +72,12 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
                 "\033[38;2;210;250;243m",
                 "\033[38;2;255;226;241m",
                 "\033[38;2;232;210;255m",
-                "\033[38;2;201;220;255m",
             )
             art = "\n".join(
                 f"{shades[index]}{line}\033[0m"
                 for index, line in enumerate(art.splitlines())
             )
-        title = "own-chrome"
-        if self._color:
-            title = f"\033[1;38;2;238;232;255m{title}\033[0m"
-        lines = body.splitlines()
-        if lines and lines[0].startswith("usage:"):
-            return art + "\n" + title + "\n\n" + body
-        return art + "\n" + title + "\n\n" + body
+        return art + "\n\n" + body
 
 
 class VersionAction(argparse.Action):
