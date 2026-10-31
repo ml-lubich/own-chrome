@@ -40,6 +40,48 @@ def emit(payload: object, as_json: bool) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
+class HelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Compact branded help with a small shaded Chrome mark."""
+
+    def __init__(self, *args, **kwargs):
+        self._color = (
+            sys.stdout.isatty()
+            and os.environ.get("NO_COLOR") is None
+            and os.environ.get("TERM", "") not in ("", "dumb")
+        )
+        super().__init__(*args, **kwargs)
+
+    def format_help(self):
+        body = super().format_help()
+        mark = "◆"
+        if self._color:
+            mark = "\033[38;2;191;237;255m◆\033[38;2;225;202;255m◆\033[0m"
+        title = f"{mark} own-chrome"
+        if self._color:
+            title = f"\033[1;38;2;238;232;255m{title}\033[0m"
+        lines = body.splitlines()
+        if lines and lines[0].startswith("usage:"):
+            lines.insert(0, title)
+            lines.insert(1, "")
+            return "\n".join(lines) + "\n"
+        return title + "\n\n" + body
+
+
+class VersionAction(argparse.Action):
+    def __init__(self, option_strings, dest, version, **kwargs):
+        self.version = version
+        super().__init__(option_strings, dest, nargs=0, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(self.version)
+        parser.exit()
+
+
+def _parser(*args, **kwargs) -> argparse.ArgumentParser:
+    kwargs.setdefault("formatter_class", HelpFormatter)
+    return argparse.ArgumentParser(*args, **kwargs)
+
+
 def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--json", action="store_true", help="One JSON object on stdout")
@@ -62,11 +104,15 @@ def _browser_harness_env(browser: dict[str, object], endpoint: str) -> dict[str,
 
 
 def main(argv: list[str] | None = None) -> int:
-    common = argparse.ArgumentParser(add_help=False)
+    common = _parser(add_help=False)
     _common(common)
-    parser = argparse.ArgumentParser(prog="own-chrome", description="Drive the already-open Google Chrome.")
-    parser.add_argument("-V", "--version", action="version", version=f"own-chrome {__version__}")
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    parser = argparse.ArgumentParser(
+        prog="own-chrome",
+        description="Drive the already-open Google Chrome.",
+        formatter_class=HelpFormatter,
+    )
+    parser.add_argument("-V", "--version", action=VersionAction, version=f"own-chrome {__version__}")
+    sub = parser.add_subparsers(dest="cmd", required=True, parser_class=_parser)
     sub.add_parser("status", parents=[common])
     sub.add_parser("tabs", parents=[common])
     open_cmd = sub.add_parser("open", parents=[common])

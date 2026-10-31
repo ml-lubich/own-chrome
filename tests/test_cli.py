@@ -155,7 +155,28 @@ def test_root_help_accepts_both_help_flags(flag, capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main([flag])
     assert exc.value.code == 0
-    assert "agent" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "agent" in out
+    assert "own-chrome" in out
+    assert "◆" in out
+
+
+def test_nested_help_has_brand_and_usage(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["agent", "-h"])
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "own-chrome" in out
+    assert "usage:" in out
+
+
+def test_help_is_uncolored_without_tty(monkeypatch, capsys):
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    with pytest.raises(SystemExit):
+        cli.main(["-h"])
+    out = capsys.readouterr().out
+    assert "\033[" not in out
 
 
 @pytest.mark.parametrize("flag", ["-V", "--version"])
