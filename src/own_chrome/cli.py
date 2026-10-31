@@ -44,8 +44,12 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
     """Branded help with shaded terminal art and a monochrome fallback."""
 
     def __init__(self, *args, **kwargs):
+        try:
+            is_tty = sys.stdout.isatty()
+        except (AttributeError, OSError, ValueError):
+            is_tty = False
         self._color = (
-            sys.stdout.isatty()
+            is_tty
             and os.environ.get("NO_COLOR") is None
             and os.environ.get("TERM", "") not in ("", "dumb")
         )
