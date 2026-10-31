@@ -158,8 +158,8 @@ def test_root_help_accepts_both_help_flags(flag, capsys):
     out = capsys.readouterr().out
     assert "agent" in out
     assert "own-chrome" in out
-    assert "___ _      __| |__" in out
-    assert "| (_) | |/ |/ /" in out
+    assert "#####  #   #  #   #         #####  #   #  ####   #####  #   #  #####" in out
+    assert out.index("#####  #   #  #   #") < out.index("usage:")
 
 
 def test_nested_help_has_brand_and_usage(capsys):

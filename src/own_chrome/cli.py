@@ -29,6 +29,26 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 
+_WORDMARK_FONT = {
+    "o": ("#####", "#   #", "#   #", "#   #", "#####"),
+    "w": ("#   #", "#   #", "# # #", "## ##", "#   #"),
+    "n": ("#   #", "##  #", "# # #", "#  ##", "#   #"),
+    "-": ("     ", "     ", "#####", "     ", "     "),
+    "c": ("#####", "#    ", "#    ", "#    ", "#####"),
+    "h": ("#   #", "#   #", "#####", "#   #", "#   #"),
+    "r": ("#### ", "#   #", "#### ", "#  # ", "#   #"),
+    "m": ("#   #", "## ##", "# # #", "#   #", "#   #"),
+    "e": ("#####", "#    ", "#### ", "#    ", "#####"),
+}
+
+
+def _wordmark() -> str:
+    rows = ["  ".join(_WORDMARK_FONT[letter][row] for letter in "own-chrome") for row in range(5)]
+    # A small offset extrusion adds depth while keeping the letters readable.
+    rows.extend((" " * (2 + row) + "." * (66 - 2 * row) for row in range(2)))
+    return "\n".join(rows)
+
+
 def emit(payload: object, as_json: bool) -> None:
     if as_json:
         json.dump(payload, sys.stdout, ensure_ascii=False)
@@ -57,13 +77,7 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
 
     def format_help(self):
         body = super().format_help()
-        art = (
-            "                 _                            _\n"
-            "   ___ _      __| |__  ___ _ __  ___   ___ __| |\n"
-            "  / _ \\ | /| / /| '_ \\/ _ \\ '_ \\/ _ \\ / _` |\n"
-            " | (_) | |/ |/ / | | | |  __/ | | | (_) | (_| |\n"
-            "  \\___/|__/|__/  |_| |_|\\___|_| |_|\\___/ \\__,_|"
-        )
+        art = _wordmark()
         if self._color:
             shades = (
                 "\033[38;2;225;204;255m",
@@ -71,6 +85,8 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
                 "\033[38;2;195;230;255m",
                 "\033[38;2;210;250;245m",
                 "\033[38;2;245;220;255m",
+                "\033[38;2;174;156;220m",
+                "\033[38;2;155;142;205m",
             )
             art = "\n".join(
                 f"{shades[index]}{line}\033[0m"
