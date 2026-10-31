@@ -41,7 +41,7 @@ def emit(payload: object, as_json: bool) -> None:
 
 
 class HelpFormatter(argparse.RawDescriptionHelpFormatter):
-    """Compact branded help with a small shaded Chrome mark."""
+    """Branded help with shaded terminal art and a monochrome fallback."""
 
     def __init__(self, *args, **kwargs):
         self._color = (
@@ -53,18 +53,36 @@ class HelpFormatter(argparse.RawDescriptionHelpFormatter):
 
     def format_help(self):
         body = super().format_help()
-        mark = "◆"
+        art = (
+            "       .-=========-.\n"
+            "     .'  ░▒▓███▓▒░  '.\n"
+            "    /  ░▒▓███████▓▒░  \\\n"
+            "   |  ░▒▓████████▓▒░  |\n"
+            "    \\  ░▒▓███████▓▒░  /\n"
+            "     '.  ░▒▓███▓▒░  .'\n"
+            "       '-----------'"
+        )
         if self._color:
-            mark = "\033[38;2;191;237;255m◆\033[38;2;225;202;255m◆\033[0m"
-        title = f"{mark} own-chrome"
+            shades = (
+                "\033[38;2;225;204;255m",
+                "\033[38;2;205;222;255m",
+                "\033[38;2;190;237;255m",
+                "\033[38;2;210;250;243m",
+                "\033[38;2;255;226;241m",
+                "\033[38;2;232;210;255m",
+                "\033[38;2;201;220;255m",
+            )
+            art = "\n".join(
+                f"{shades[index]}{line}\033[0m"
+                for index, line in enumerate(art.splitlines())
+            )
+        title = "own-chrome"
         if self._color:
             title = f"\033[1;38;2;238;232;255m{title}\033[0m"
         lines = body.splitlines()
         if lines and lines[0].startswith("usage:"):
-            lines.insert(0, title)
-            lines.insert(1, "")
-            return "\n".join(lines) + "\n"
-        return title + "\n\n" + body
+            return art + "\n" + title + "\n\n" + body
+        return art + "\n" + title + "\n\n" + body
 
 
 class VersionAction(argparse.Action):
